@@ -27,6 +27,12 @@ import java.util.stream.Collectors;
 public class EmployeeServlet extends HttpServlet {
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
+        String method = req.getParameter("_method");
+        if ("PUT".equalsIgnoreCase(method)) {
+            doPut(req, resp);
+            return;
+        }
+
         resp.setContentType("application/json");
         ObjectMapper mapper = new ObjectMapper();
         PrintWriter out = resp.getWriter();
@@ -188,7 +194,6 @@ public class EmployeeServlet extends HttpServlet {
 
     @Override
     protected void doPut(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
-        // Multipart request needs special handling
         resp.setContentType("application/json");
         ObjectMapper mapper = new ObjectMapper();
 
@@ -196,7 +201,6 @@ public class EmployeeServlet extends HttpServlet {
         BasicDataSource ds = (BasicDataSource) sc.getAttribute("ds");
 
         try (Connection connection = ds.getConnection()) {
-            // Parse form fields and file parts
             String eid = null;
             String ename = null;
             String enumber = null;
@@ -205,6 +209,7 @@ public class EmployeeServlet extends HttpServlet {
             String estatus = null;
             String eimageFileName = null;
 
+            // Read form data and file parts
             for (Part part : req.getParts()) {
                 String fieldName = part.getName();
                 if (part.getContentType() == null) {
@@ -220,39 +225,56 @@ public class EmployeeServlet extends HttpServlet {
                         case "estatus": estatus = value; break;
                     }
                 } else if (fieldName.equals("eimage")) {
-                    // file upload
-                    eimageFileName = Paths.get(part.getSubmittedFileName()).getFileName().toString();
+                    // file upload (new image)
+                    String originalFileName = Paths.get(part.getSubmittedFileName()).getFileName().toString();
+                    if (originalFileName != null && !originalFileName.isEmpty()) {
+                        // Save uploaded file
+                        File uploads = new File("D:\\AAD B72\\JAVA EE\\PROJECTS\\WORK\\EMS-FN\\assets\\images");
+                        if (!uploads.exists()) uploads.mkdirs();
 
-                    // Save file somewhere, e.g.:
-                    File uploads = new File(getServletContext().getRealPath("/assets/images"));
-                    if (!uploads.exists()) uploads.mkdirs();
-                    File file = new File(uploads, eimageFileName);
-                    try (InputStream input = part.getInputStream()) {
-                        Files.copy(input, file.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                        // Use UUID prefix to avoid name clashes
+                        eimageFileName = UUID.randomUUID() + "_" + originalFileName;
+
+                        File file = new File(uploads, eimageFileName);
+                        try (InputStream input = part.getInputStream()) {
+                            Files.copy(input, file.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                        }
                     }
                 }
             }
 
-            // Now update employee with or without new image
-            String sql = "UPDATE employee SET ename=?, enumber=?, eaddress=?, edepartment=?, estatus=?";
-            if (eimageFileName != null) {
-                sql += ", eimage=?";
+            // Get existing image filename from DB if no new image uploaded
+            if (eid == null || eid.isEmpty()) {
+                resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                mapper.writeValue(resp.getWriter(), Map.of(
+                        "code", "400",
+                        "status", "failed",
+                        "message", "Employee ID is missing"
+                ));
+                return;
             }
-            sql += " WHERE eid=?";
 
+            if (eimageFileName == null) {
+                PreparedStatement checkStmt = connection.prepareStatement("SELECT eimage FROM employee WHERE eid = ?");
+                checkStmt.setString(1, eid);
+                ResultSet rs = checkStmt.executeQuery();
+                if (rs.next()) {
+                    eimageFileName = rs.getString("eimage");
+                }
+                rs.close();
+                checkStmt.close();
+            }
+
+            // Update employee with all fields including image filename
+            String sql = "UPDATE employee SET ename=?, enumber=?, eaddress=?, edepartment=?, estatus=?, eimage=? WHERE eid=?";
             PreparedStatement pstm = connection.prepareStatement(sql);
             pstm.setString(1, ename);
             pstm.setString(2, enumber);
             pstm.setString(3, eaddress);
             pstm.setString(4, edepartment);
             pstm.setString(5, estatus);
-
-            if (eimageFileName != null) {
-                pstm.setString(6, eimageFileName);
-                pstm.setString(7, eid);
-            } else {
-                pstm.setString(6, eid);
-            }
+            pstm.setString(6, eimageFileName);
+            pstm.setString(7, eid);
 
             int updated = pstm.executeUpdate();
 
@@ -279,9 +301,11 @@ public class EmployeeServlet extends HttpServlet {
                     "status", "error",
                     "message", "Internal Server Error"
             ));
+            e.printStackTrace();
             throw new RuntimeException(e);
         }
     }
+
 
     @Override
     protected void doDelete(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {

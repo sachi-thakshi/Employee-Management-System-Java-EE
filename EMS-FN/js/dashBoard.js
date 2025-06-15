@@ -77,8 +77,10 @@ $('#update-employee').on('click', function () {
         formData.append('eimage', imageFile);
     }
 
+    formData.append('_method', 'PUT');
+
     $.ajax({
-        type: 'POST', // We'll keep using POST but include `_method=PUT` for servlet workaround
+        type: 'PUT',
         url: 'http://localhost:8080/EMS_Web_exploded/employee?_method=PUT',
         data: formData,
         processData: false,
